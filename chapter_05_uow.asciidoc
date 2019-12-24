@@ -97,7 +97,7 @@ def test_uow_can_retrieve_a_batch_and_allocate_to_it(session_factory):
     insert_batch(session, 'batch1', 'HIPSTER-WORKBENCH', 100, None)
     session.commit()
 
-    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)  #<1>
+    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory())  #<1>
     with uow:
         batch = uow.batches.get(reference='batch1')  #<2>
         line = model.OrderLine('o1', 'HIPSTER-WORKBENCH', 10)
@@ -214,12 +214,12 @@ DEFAULT_SESSION_FACTORY = sessionmaker(bind=create_engine(  #<1>
 
 class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
 
-    def __init__(self, session_factory=DEFAULT_SESSION_FACTORY):
-        self.session_factory = session_factory  #<1>
+    def __init__(self, session=None):
+        self.session = session or DEFAULT_SESSION_FACTORY()  #<1>
 
     def __enter__(self):
-        self.session = self.session_factory()  # type: Session  #<2>
-        self.batches = repository.SqlAlchemyRepository(self.session)  #<2>
+        self.session.start() #<2>
+        self.batches = repository.SqlAlchemyRepository(self.session)
         return super().__enter__()
 
     def __exit__(self, *args):
@@ -235,8 +235,8 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
 ----
 ====
 
-<1> The module defines a default session factory that will connect to postgres,
-    but we allow that to be overriden in our integration tests, so that we
+<1> By default create a session using a default session factory that will connect to postgres,
+    but allow that to be overriden in our integration tests, so that we
     can use SQLite instead.
 
 <2> The dunder-enter is responsible for starting a database session, and instantiating
@@ -369,7 +369,7 @@ a couple of tests:
 [source,python]
 ----
 def test_rolls_back_uncommitted_work_by_default(session_factory):
-    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
+    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory())
     with uow:
         insert_batch(uow.session, 'batch1', 'MEDIUM-PLINTH', 100, None)
 
@@ -382,7 +382,7 @@ def test_rolls_back_on_error(session_factory):
     class MyException(Exception):
         pass
 
-    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
+    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory())
     with pytest.raises(MyException):
         with uow:
             insert_batch(uow.session, 'batch1', 'LARGE-FORK', 100, None)
