@@ -41,10 +41,10 @@ Here's how it'll look in use, when it's finished:
 ----
 def allocate(
         orderid: str, sku: str, qty: int,
-        uow: unit_of_work.AbstractUnitOfWork
+        uow_klass#0 
 ) -> str:
     line = OrderLine(orderid, sku, qty)
-    with uow:  #<1>
+    with uow_klass() as uow:  #<1>
         batches = uow.batches.list()  #<2>
         ...
         batchref = model.allocate(line, batches)
@@ -52,6 +52,7 @@ def allocate(
 ----
 ====
 
+<0> Pass in a factory function or class that creates a unit of work, _not an instance_
 <1> We'll start a unit of work as a context manager
 <2> `uow.batches` is the batches repo, so the unit of work provides us
     access to our permanent storage.
@@ -277,14 +278,14 @@ class FakeUnitOfWork(unit_of_work.AbstractUnitOfWork):
 
 def test_add_batch():
     uow = FakeUnitOfWork()  #<3>
-    services.add_batch("b1", "CRUNCHY-ARMCHAIR", 100, None, uow)  #<3>
+    services.add_batch("b1", "CRUNCHY-ARMCHAIR", 100, None, lambda: uow)  #<3>
     assert uow.batches.get("b1") is not None
     assert uow.committed
 
 
 def test_allocate_returns_allocation():
     uow = FakeUnitOfWork()  #<3>
-    services.add_batch("batch1", "COMPLICATED-LAMP", 100, None, uow)  #<3>
+    services.add_batch("batch1", "COMPLICATED-LAMP", 100, None, lambda: uow)  #<3>
     result = services.allocate("o1", "COMPLICATED-LAMP", 10, uow)  #<3>
     assert result == "batch1"
 ...
@@ -332,19 +333,19 @@ And here's what our new service layer looks like:
 ----
 def add_batch(
         ref: str, sku: str, qty: int, eta: Optional[date],
-        uow: unit_of_work.AbstractUnitOfWork  #<1>
+        uow_klass: unit_of_work.AbstractUnitOfWork  #<1>
 ):
-    with uow:
+    with uow_klass() as uow:
         uow.batches.add(model.Batch(ref, sku, qty, eta))
         uow.commit()
 
 
 def allocate(
         orderid: str, sku: str, qty: int,
-        uow: unit_of_work.AbstractUnitOfWork  #<1>
+        uow_klass: unit_of_work.AbstractUnitOfWork  #<1>
 ) -> str:
     line = OrderLine(orderid, sku, qty)
-    with uow:
+    with uow_klass() as uow:
         batches = uow.batches.list()
         if not is_valid_sku(line.sku, batches):
             raise InvalidSku(f'Invalid sku {line.sku}')
@@ -479,8 +480,8 @@ Supposing we want to be able to deallocate and then reallocate orders?
 [source,python]
 [role="skip"]
 ----
-def reallocate(line: OrderLine, uow: AbstractUnitOfWork) -> str:
-    with uow:
+def reallocate(line: OrderLine, uow_klass) -> str:
+    with uow_klass() as uow:
         batch = uow.batches.get(sku=line.sku)
         if batch is None:
             raise InvalidSku(f'Invalid sku {line.sku}')
@@ -507,8 +508,8 @@ opened and half our sofas have fallen into the Indian Ocean.  Oops!
 [source,python]
 [role="skip"]
 ----
-def change_batch_quantity(batchref: str, new_qty: int, uow: AbstractUnitOfWork):
-    with uow:
+def change_batch_quantity(batchref: str, new_qty: int, uow_klass):
+    with uow_klass() as uow:
         batch = uow.batches.get(reference=batchref)
         batch.change_purchased_quantity(new_qty)
         while batch.available_quantity < 0:
